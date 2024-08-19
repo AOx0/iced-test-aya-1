@@ -11,7 +11,7 @@ use aya_ebpf::{
     programs::RawTracePointContext,
     EbpfContext, PtRegs,
 };
-use aya_log_ebpf::warn;
+use aya_log_ebpf::{error, warn};
 use iced_test_aya_common::Data;
 
 #[map]
@@ -25,6 +25,8 @@ pub fn iced_test_aya(ctx: RawTracePointContext) -> i32 {
     }
 }
 
+/// Args basically always contains 2 arguments: *pt_regs and op_code (syscall id).
+/// See https://stackoverflow.com/questions/70652825/ebpf-raw-tracepoint-arguments
 fn get_args(ctx: &RawTracePointContext) -> &[u64] {
     let args: &bpf_raw_tracepoint_args =
         unsafe { &*{ ctx.as_ptr() as *mut bpf_raw_tracepoint_args } };
@@ -34,26 +36,17 @@ fn get_args(ctx: &RawTracePointContext) -> &[u64] {
 }
 
 fn try_iced_test_aya(ctx: RawTracePointContext) -> Result<i32, i32> {
-    let args = get_args(&ctx);
-
-    let [args, op, ..] = args else {
+    // Get regs pointer and continue if op_code is execve (59).
+    // See:
+    // - https://github.com/torvalds/linux/blob/v6.7/arch/x86/entry/syscalls/syscall_64.tbl
+    // - https://github.com/torvalds/linux/blob/v6.7/include/linux/syscalls.h
+    let [regs, 59, ..] = get_args(&ctx) else {
         return Ok(0);
     };
-
-    if op != &59 {
-        return Ok(0);
-    }
-
-    let args: *mut pt_regs = *args as *mut _;
-    let args = PtRegs::new(args);
-
-    // let args = get_args::<3>(&ctx);
-    // let [_, _, arg, ..] = args else {
-    //     return Ok(0);
-    // };
+    let regs = PtRegs::new(*regs as *mut _);
 
     let Some(mut entry) = EVENTS.reserve(0) else {
-        warn!(&ctx, "Error");
+        error!(&ctx, "EVENTS RingBuf is full");
         return Ok(0);
     };
 
@@ -69,12 +62,13 @@ fn try_iced_test_aya(ctx: RawTracePointContext) -> Result<i32, i32> {
             },
         );
 
-        let Some(src) = args.arg(0) else {
+        // Filename of the executed command is the first arg
+        // See: https://elixir.bootlin.com/linux/v6.10.5/source/include/linux/syscalls.h#L800
+        if let Some(src) = regs.arg(0) {
+            let _ = bpf_probe_read_user_str_bytes(src, &mut (*entry.as_mut_ptr()).path);
+        } else {
             warn!(&ctx, "Error getting arg0");
-            entry.discard(0);
-            return Ok(0);
-        };
-        let _ = bpf_probe_read_user_str_bytes(src, &mut (*entry.as_mut_ptr()).path);
+        }
     }
     entry.submit(0);
 
