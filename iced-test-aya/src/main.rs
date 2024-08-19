@@ -147,6 +147,7 @@ impl Application for State {
                     .extend(
                         self.events
                             .iter()
+                            .rev()
                             .map(|e| Text::new(format!("Event: {e}")))
                             .map(|t| t.into()),
                     )

@@ -25,22 +25,22 @@ pub fn iced_test_aya(ctx: RawTracePointContext) -> i32 {
     }
 }
 
-fn get_args<const ARGS: usize>(ctx: &RawTracePointContext) -> &[u64] {
+fn get_args(ctx: &RawTracePointContext) -> &[u64] {
     let args: &bpf_raw_tracepoint_args =
         unsafe { &*{ ctx.as_ptr() as *mut bpf_raw_tracepoint_args } };
 
-    let args = unsafe { args.args.as_slice(ARGS) };
+    let args = unsafe { args.args.as_slice(2) };
     args
 }
 
 fn try_iced_test_aya(ctx: RawTracePointContext) -> Result<i32, i32> {
-    let args = get_args::<2>(&ctx);
+    let args = get_args(&ctx);
 
     let [args, op, ..] = args else {
         return Ok(0);
     };
 
-    if !(op == &59 && ctx.uid() == 1000) {
+    if op != &59 {
         return Ok(0);
     }
 
